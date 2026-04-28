@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 // CONFIGURACIÓN GLOBAL
-const String baseUrl = 'http://10.0.2.2:8000/api'; 
+const String baseUrl = 'https://mi-app-django.onrender.com/api';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
