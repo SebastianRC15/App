@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -89,12 +90,16 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'app',
-        'USER': 'root',
-        'PASSWORD': '123456',
-        'HOST': 'localhost',
-        'PORT': '3306',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME', 'postgres'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'tElALG08QFjtPTFh'),
+        'HOST': os.getenv('DB_HOST', 'db.nawnuzqnehgdirgdeavw.supabase.co'),
+        'PORT': os.getenv('DB_PORT', '6543'),
+        'OPTIONS': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+        },
     }
 }
 
@@ -134,8 +139,19 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Supabase REST API
+SUPABASE_REST_URL = os.getenv(
+    'SUPABASE_REST_URL',
+    'https://nawnuzqnehgdirgdeavw.supabase.co/rest/v1/',
+)
+SUPABASE_API_KEY = os.getenv(
+    'SUPABASE_API_KEY',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5hd251enFuZWhnZGlyZ2RlYXZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MzA2NzUsImV4cCI6MjA5MjUwNjY3NX0.Xc8XvvkOM_mTMCwAHvKCZdJtZGDnNCZPUtmsRmhSq68',
+)

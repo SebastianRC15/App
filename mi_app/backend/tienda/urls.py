@@ -1,14 +1,15 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import UsuarioViewSet, ProductoViewSet, CarritoViewSet
+from .views import UsuarioViewSet, ProductoViewSet, CategoriaViewSet, CarritoViewSet, PedidoViewSet, supabase_health
 
 router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'productos', ProductoViewSet)
+router.register(r'categorias', CategoriaViewSet)
+router.register(r'carrito', CarritoViewSet, basename='carrito')
+router.register(r'pedidos', PedidoViewSet, basename='pedido')
 
 urlpatterns = [
     path('', include(router.urls)),
-    path('carrito/', CarritoViewSet.as_view({'get': 'list'}), name='carrito-detalle'),
-    path('carrito/agregar/', CarritoViewSet.as_view({'post': 'agregar'}), name='carrito-agregar'),
-    path('carrito/vaciar/', CarritoViewSet.as_view({'post': 'vaciar'}), name='carrito-vaciar'),
+    path('supabase/health/', supabase_health),
 ]
