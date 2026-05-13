@@ -1,9 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 
 // CONFIGURACIÓN GLOBAL
-const String baseUrl = 'https://mi-app-django.onrender.com/api';
+const String baseUrl = 'https://app-2-rndf.onrender.com/api';
+
+dynamic _tryDecodeJson(String raw) {
+  try {
+    return json.decode(raw);
+  } catch (_) {
+    return null;
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -981,54 +991,171 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
+  final TextEditingController _nombreController = TextEditingController();
+  final TextEditingController _confirmPassController = TextEditingController();
   final TextEditingController _referralController = TextEditingController();
+  static const String _googleServerClientId = '596755315651-8q26b014db9eo7gu18heedr977euud3p.apps.googleusercontent.com';
+  final _loginFormKey = GlobalKey<FormState>();
+  final _registerFormKey = GlobalKey<FormState>();
+  late final TabController _authTabController;
+  bool _isAuthLoading = false;
+  bool _loginPasswordVisible = false;
+  bool _registerPasswordVisible = false;
+  bool _registerConfirmVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authTabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _authTabController.dispose();
+    _userController.dispose();
+    _passController.dispose();
+    _nombreController.dispose();
+    _confirmPassController.dispose();
+    _referralController.dispose();
+    super.dispose();
+  }
+
+  String _email() => _userController.text.trim().toLowerCase();
 
   Future<void> login() async {
+    if (!_loginFormKey.currentState!.validate()) return;
+    if (_isAuthLoading) return;
+
+    setState(() => _isAuthLoading = true);
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/token/'),
-        body: {'username': _userController.text, 'password': _passController.text},
+        body: {'username': _email(), 'password': _passController.text},
       );
+      final rawBody = utf8.decode(response.bodyBytes);
+      final data = _tryDecodeJson(rawBody);
       
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        if (data is! Map<String, dynamic>) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Respuesta inválida del servidor (${response.statusCode})')),
+          );
+          return;
+        }
         GlobalState.token = data['access'];
         await GlobalState.fetchUserData();
         setState(() {});
       } else {
-        final error = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${error['detail'] ?? 'Credenciales inválidas'}')));
+        final detail = data is Map<String, dynamic>
+            ? (data['detail']?.toString() ?? data.toString())
+            : rawBody;
+        final isServerOperationalError =
+            rawBody.contains('<title>OperationalError') || rawBody.contains('OperationalError at');
+        final isInactive = detail.contains('No active account found');
+        final msg = isServerOperationalError
+            ? 'El servidor tiene un error de base de datos. Verifica DATABASE_URL/migraciones en el backend (Render).'
+            : (isInactive
+                ? 'Cuenta no verificada. Revisa tu correo y abre el link de verificación.'
+                : detail);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error ${response.statusCode}: $msg')),
+        );
+        if (isInactive) {
+          await _showResendDialog();
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error de conexión: $e')));
+    } finally {
+      if (mounted) setState(() => _isAuthLoading = false);
+    }
+  }
+
+  Future<void> reenviarVerificacion() async {
+    final email = _email();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Escribe tu correo primero.')));
+      return;
+    }
+    setState(() => _isAuthLoading = true);
+    try {
+      await _postResendVerification(email, showSnackBar: true);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error de conexión: $e')));
+    } finally {
+      if (mounted) setState(() => _isAuthLoading = false);
+    }
+  }
+
+  Future<void> _postResendVerification(String email, {required bool showSnackBar}) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/usuarios/resend_verification/'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'correo_electronico': email}),
+    );
+    final rawBody = utf8.decode(response.bodyBytes);
+    final data = _tryDecodeJson(rawBody);
+    final msg = data is Map<String, dynamic>
+        ? (data['message']?.toString() ?? rawBody)
+        : rawBody;
+    if (showSnackBar) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
   Future<void> register() async {
+    if (!_registerFormKey.currentState!.validate()) return;
+    if (_isAuthLoading) return;
+
+    final email = _email();
+    final password = _passController.text;
+    final confirm = _confirmPassController.text;
+    if (password != confirm) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Las contraseñas no coinciden.')));
+      return;
+    }
+
+    setState(() => _isAuthLoading = true);
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/usuarios/'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
-          'username': _userController.text,
-          'password': _passController.text,
-          'correo_electronico': '${_userController.text}@example.com',
-          'nombre_completo': _userController.text,
+          'username': email,
+          'password': password,
+          'correo_electronico': email,
+          'nombre_completo': _nombreController.text.trim().isEmpty ? email : _nombreController.text.trim(),
         }),
       );
+      final rawBody = utf8.decode(response.bodyBytes);
+      final data = _tryDecodeJson(rawBody);
       
       if (response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Registro exitoso, iniciando sesión...')));
-        await login();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cuenta creada. Te enviamos un correo para verificarla.')),
+        );
+        await _postResendVerification(email, showSnackBar: false);
+        _authTabController.animateTo(0);
       } else {
-        final error = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error en registro: $error')));
+        final detail = data is Map<String, dynamic> || data is List
+            ? data.toString()
+            : rawBody;
+        final isServerOperationalError =
+            rawBody.contains('<title>OperationalError') || rawBody.contains('OperationalError at');
+        final msg = isServerOperationalError
+            ? 'El servidor tiene un error de base de datos. Verifica DATABASE_URL/migraciones en el backend (Render).'
+            : detail;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error en registro (${response.statusCode}): $msg')),
+        );
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error de conexión: $e')));
+    } finally {
+      if (mounted) setState(() => _isAuthLoading = false);
     }
   }
 
@@ -1060,21 +1187,322 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return [];
   }
 
+  Future<void> solicitarRecuperacion() async {
+    final email = _email();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Escribe tu correo primero.')));
+      return;
+    }
+    if (_isAuthLoading) return;
+    setState(() => _isAuthLoading = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/usuarios/password_reset_request/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'correo_electronico': email}),
+      );
+      final rawBody = utf8.decode(response.bodyBytes);
+      final data = _tryDecodeJson(rawBody);
+      final msg = data is Map<String, dynamic>
+          ? (data['message']?.toString() ?? rawBody)
+          : rawBody;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error de conexión: $e')));
+    } finally {
+      if (mounted) setState(() => _isAuthLoading = false);
+    }
+  }
+
+  Future<void> _showResendDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cuenta no verificada'),
+        content: const Text('Te enviamos un correo de verificación. Si no te llegó, puedes reenviarlo.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await reenviarVerificacion();
+            },
+            child: const Text('Reenviar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> googleLogin() async {
+    if (_isAuthLoading) return;
+    setState(() => _isAuthLoading = true);
+    try {
+      final googleSignIn = GoogleSignIn(
+        scopes: const ['email'],
+        serverClientId: _googleServerClientId,
+      );
+
+      final account = await googleSignIn.signIn();
+      if (account == null) return;
+
+      final auth = await account.authentication;
+      final idToken = auth.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google no devolvió idToken (revisa el Client ID).')),
+        );
+        return;
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/usuarios/google_login/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'id_token': idToken}),
+      );
+
+      final rawBody = utf8.decode(response.bodyBytes);
+      final data = _tryDecodeJson(rawBody);
+
+      if (response.statusCode == 200) {
+        if (data is! Map<String, dynamic>) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Respuesta inválida del servidor (${response.statusCode})')),
+          );
+          return;
+        }
+
+        GlobalState.token = data['access']?.toString();
+        await GlobalState.fetchUserData();
+        setState(() {});
+      } else {
+        final detail = data is Map<String, dynamic>
+            ? (data['error']?.toString() ?? data.toString())
+            : rawBody;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error Google (${response.statusCode}): $detail')),
+        );
+      }
+    } catch (e) {
+      if (e is PlatformException && e.code == 'sign_in_failed') {
+        final message = (e.message ?? '').toString();
+        final isApi10 = message.contains('ApiException: 10');
+        final hint = isApi10
+            ? 'Configura Google Sign-In: package name (com.tiendasimple.app) y SHA-1/SHA-256 en Google Cloud. Luego usa el Web Client ID como serverClientId.'
+            : 'Revisa la configuración de Google Sign-In en Android.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Sign-In falló. $hint')),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      if (mounted) setState(() => _isAuthLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (GlobalState.token == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Ingreso')),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              TextField(controller: _userController, decoration: const InputDecoration(labelText: 'Usuario')),
-              TextField(controller: _passController, decoration: const InputDecoration(labelText: 'Contraseña'), obscureText: true),
-              const SizedBox(height: 20),
-              ElevatedButton(onPressed: login, child: const Text('Iniciar Sesión')),
-              TextButton(onPressed: register, child: const Text('Registrarse')),
-            ],
+        appBar: AppBar(title: const Text('Cuenta')),
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Card(
+                  elevation: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TabBar(
+                          controller: _authTabController,
+                          tabs: const [
+                            Tab(text: 'Ingresar'),
+                            Tab(text: 'Crear cuenta'),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          height: 380,
+                          child: TabBarView(
+                            controller: _authTabController,
+                            children: [
+                              Form(
+                                key: _loginFormKey,
+                                child: ListView(
+                                  padding: EdgeInsets.zero,
+                                  children: [
+                                    TextFormField(
+                                      controller: _userController,
+                                      keyboardType: TextInputType.emailAddress,
+                                      autofillHints: const [AutofillHints.email, AutofillHints.username],
+                                      decoration: const InputDecoration(
+                                        labelText: 'Correo',
+                                        prefixIcon: Icon(Icons.email_outlined),
+                                      ),
+                                      validator: (v) {
+                                        final s = (v ?? '').trim();
+                                        if (s.isEmpty) return 'Ingresa tu correo';
+                                        if (!s.contains('@') || !s.contains('.')) return 'Correo inválido';
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _passController,
+                                      obscureText: !_loginPasswordVisible,
+                                      autofillHints: const [AutofillHints.password],
+                                      decoration: InputDecoration(
+                                        labelText: 'Contraseña',
+                                        prefixIcon: const Icon(Icons.lock_outline),
+                                        suffixIcon: IconButton(
+                                          onPressed: () => setState(() => _loginPasswordVisible = !_loginPasswordVisible),
+                                          icon: Icon(_loginPasswordVisible ? Icons.visibility_off : Icons.visibility),
+                                        ),
+                                      ),
+                                      validator: (v) => (v ?? '').isEmpty ? 'Ingresa tu contraseña' : null,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: FilledButton(
+                                        onPressed: _isAuthLoading ? null : login,
+                                        child: _isAuthLoading
+                                            ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                            : const Text('Iniciar sesión'),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        onPressed: _isAuthLoading ? null : googleLogin,
+                                        icon: const Icon(Icons.login),
+                                        label: const Text('Continuar con Google'),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        TextButton(
+                                          onPressed: _isAuthLoading ? null : solicitarRecuperacion,
+                                          child: const Text('Olvidé mi contraseña'),
+                                        ),
+                                        TextButton(
+                                          onPressed: _isAuthLoading ? null : reenviarVerificacion,
+                                          child: const Text('Reenviar verificación'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Form(
+                                key: _registerFormKey,
+                                child: ListView(
+                                  padding: EdgeInsets.zero,
+                                  children: [
+                                    TextFormField(
+                                      controller: _nombreController,
+                                      textCapitalization: TextCapitalization.words,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Nombre completo',
+                                        prefixIcon: Icon(Icons.person_outline),
+                                      ),
+                                      validator: (v) => (v ?? '').trim().isEmpty ? 'Ingresa tu nombre' : null,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _userController,
+                                      keyboardType: TextInputType.emailAddress,
+                                      autofillHints: const [AutofillHints.email],
+                                      decoration: const InputDecoration(
+                                        labelText: 'Correo',
+                                        prefixIcon: Icon(Icons.email_outlined),
+                                      ),
+                                      validator: (v) {
+                                        final s = (v ?? '').trim();
+                                        if (s.isEmpty) return 'Ingresa tu correo';
+                                        if (!s.contains('@') || !s.contains('.')) return 'Correo inválido';
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _passController,
+                                      obscureText: !_registerPasswordVisible,
+                                      decoration: InputDecoration(
+                                        labelText: 'Contraseña',
+                                        prefixIcon: const Icon(Icons.lock_outline),
+                                        suffixIcon: IconButton(
+                                          onPressed: () => setState(() => _registerPasswordVisible = !_registerPasswordVisible),
+                                          icon: Icon(_registerPasswordVisible ? Icons.visibility_off : Icons.visibility),
+                                        ),
+                                      ),
+                                      validator: (v) {
+                                        final s = (v ?? '');
+                                        if (s.isEmpty) return 'Ingresa una contraseña';
+                                        if (s.length < 6) return 'Mínimo 6 caracteres';
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _confirmPassController,
+                                      obscureText: !_registerConfirmVisible,
+                                      decoration: InputDecoration(
+                                        labelText: 'Confirmar contraseña',
+                                        prefixIcon: const Icon(Icons.lock_outline),
+                                        suffixIcon: IconButton(
+                                          onPressed: () => setState(() => _registerConfirmVisible = !_registerConfirmVisible),
+                                          icon: Icon(_registerConfirmVisible ? Icons.visibility_off : Icons.visibility),
+                                        ),
+                                      ),
+                                      validator: (v) {
+                                        final s = (v ?? '');
+                                        if (s.isEmpty) return 'Confirma tu contraseña';
+                                        if (s != _passController.text) return 'Las contraseñas no coinciden';
+                                        return null;
+                                      },
+                                    ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: FilledButton(
+                                        onPressed: _isAuthLoading ? null : register,
+                                        child: _isAuthLoading
+                                            ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                            : const Text('Crear cuenta'),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Al crear la cuenta, recibirás un correo para verificarla antes de iniciar sesión.',
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       );

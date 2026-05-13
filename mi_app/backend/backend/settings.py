@@ -12,21 +12,24 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import os
 from pathlib import Path
+from urllib.parse import unquote, urlparse
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env', override=True)
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-jtd+tawdp-t(8uq3_vgqy_r__d#+b3n#wflj6ai9&3+v4to6=('
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '*').split(',') if host.strip()]
 
 
 # Application definition
@@ -88,18 +91,22 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    raise ValueError('DATABASE_URL no esta configurada. Define DATABASE_URL en el archivo .env')
+
+parsed_db = urlparse(DATABASE_URL)
+DB_CONNECT_TIMEOUT = int(os.getenv('DB_CONNECT_TIMEOUT', '10'))
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'postgres'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'tElALG08QFjtPTFh'),
-        'HOST': os.getenv('DB_HOST', 'db.nawnuzqnehgdirgdeavw.supabase.co'),
-        'PORT': os.getenv('DB_PORT', '6543'),
-        'OPTIONS': {
-            'sslmode': 'require',
-            'connect_timeout': 10,
-        },
+        'NAME': parsed_db.path.lstrip('/'),
+        'USER': parsed_db.username or '',
+        'PASSWORD': unquote(parsed_db.password or ''),
+        'HOST': parsed_db.hostname or '',
+        'PORT': str(parsed_db.port or '5432'),
+        'OPTIONS': {'sslmode': 'require', 'connect_timeout': DB_CONNECT_TIMEOUT},
+        'CONN_MAX_AGE': 60,
     }
 }
 
@@ -149,9 +156,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Supabase REST API
 SUPABASE_REST_URL = os.getenv(
     'SUPABASE_REST_URL',
-    'https://nawnuzqnehgdirgdeavw.supabase.co/rest/v1/',
+    '',
 )
 SUPABASE_API_KEY = os.getenv(
     'SUPABASE_API_KEY',
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5hd251enFuZWhnZGlyZ2RlYXZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MzA2NzUsImV4cCI6MjA5MjUwNjY3NX0.Xc8XvvkOM_mTMCwAHvKCZdJtZGDnNCZPUtmsRmhSq68',
+    '',
 )
+
+# Google Auth
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+
+EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'no-reply@example.com')
+
+if EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+else:
+    EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+
+BACKEND_PUBLIC_URL = os.getenv('BACKEND_PUBLIC_URL', '') or os.getenv('FRONTEND_BASE_URL', 'http://127.0.0.1:8000')

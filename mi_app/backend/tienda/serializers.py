@@ -4,15 +4,17 @@ from .models import Usuario, Producto, Categoria, Carrito, ItemCarrito, Pedido, 
 class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
-        fields = ('id', 'username', 'nombre_completo', 'dni_ruc', 'correo_electronico', 'telefono', 'direccion_referencia', 'distrito', 'codigo_referido_propio', 'id_referido_por', 'saldo_disponible', 'fecha_registro', 'password')
+        fields = ('id', 'username', 'nombre_completo', 'dni_ruc', 'correo_electronico', 'telefono', 'direccion_referencia', 'distrito', 'codigo_referido_propio', 'id_referido_por', 'saldo_disponible', 'fecha_registro', 'password', 'is_active')
         extra_kwargs = {
             'password': {'write_only': True, 'required': False},
             'codigo_referido_propio': {'read_only': True},
             'saldo_disponible': {'read_only': True},
             'fecha_registro': {'read_only': True},
+            'is_active': {'read_only': True},
         }
 
     def create(self, validated_data):
+        validated_data['is_active'] = False
         user = Usuario.objects.create_user(**validated_data)
         return user
 
