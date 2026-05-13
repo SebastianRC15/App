@@ -490,6 +490,13 @@ def supabase_health(request):
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
+def google_health(request):
+    client_id = getattr(settings, 'GOOGLE_CLIENT_ID', '')
+    return Response({'configured': bool(client_id)})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
 def db_health(request):
     try:
         with connection.cursor() as cursor:

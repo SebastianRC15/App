@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import UsuarioViewSet, ProductoViewSet, CategoriaViewSet, CarritoViewSet, PedidoViewSet, supabase_health, db_health
+from .views import UsuarioViewSet, ProductoViewSet, CategoriaViewSet, CarritoViewSet, PedidoViewSet, supabase_health, db_health, google_health
 
 router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
@@ -13,4 +13,5 @@ urlpatterns = [
     path('', include(router.urls)),
     path('supabase/health/', supabase_health),
     path('db/health/', db_health),
+    path('google/health/', google_health),
 ]
