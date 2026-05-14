@@ -135,7 +135,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             )
         try:
             if response.status_code in (200, 201):
-                payload = response.data if isinstance(response.data, dict) else {}
+                payload = dict(response.data) if isinstance(response.data, dict) else {}
                 user_id = payload.get('id')
                 if user_id:
                     user = Usuario.objects.filter(id=user_id).first()
@@ -144,15 +144,29 @@ class UsuarioViewSet(viewsets.ModelViewSet):
                 if user:
                     token = signing.dumps({'uid': str(user.id), 'email': user.correo_electronico}, salt='email-verify')
                     link = f"{settings.BACKEND_PUBLIC_URL}/api/usuarios/verify_email/?token={token}"
-                    send_mail(
-                        subject='Verifica tu correo',
-                        message=f'Para activar tu cuenta, abre este enlace:\n\n{link}\n\nSi no solicitaste esto, ignora este mensaje.',
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        recipient_list=[user.correo_electronico],
-                        fail_silently=True,
-                    )
+                    email_sent = True
+                    email_error = None
+                    try:
+                        send_mail(
+                            subject='Verifica tu correo',
+                            message=f'Para activar tu cuenta, abre este enlace:\n\n{link}\n\nSi no solicitaste esto, ignora este mensaje.',
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[user.correo_electronico],
+                            fail_silently=not getattr(settings, 'DEBUG', False),
+                        )
+                    except Exception as e:
+                        email_sent = False
+                        email_error = str(e)
+
+                    payload['verification_email_sent'] = email_sent
+                    if getattr(settings, 'DEBUG', False):
+                        payload['verification_link'] = link
+                        if email_error:
+                            payload['verification_email_error'] = email_error
+
+                    return Response(payload, status=response.status_code, headers=getattr(response, 'headers', None))
         except Exception:
-            pass
+            return response
         return response
 
     @action(detail=False, methods=['post'])
@@ -164,13 +178,17 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         if user and not user.is_active:
             token = signing.dumps({'uid': str(user.id), 'email': user.correo_electronico}, salt='email-verify')
             link = f"{settings.BACKEND_PUBLIC_URL}/api/usuarios/verify_email/?token={token}"
-            send_mail(
-                subject='Verifica tu correo',
-                message=f'Para activar tu cuenta, abre este enlace:\n\n{link}\n\nSi no solicitaste esto, ignora este mensaje.',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.correo_electronico],
-                fail_silently=True,
-            )
+            try:
+                send_mail(
+                    subject='Verifica tu correo',
+                    message=f'Para activar tu cuenta, abre este enlace:\n\n{link}\n\nSi no solicitaste esto, ignora este mensaje.',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.correo_electronico],
+                    fail_silently=not getattr(settings, 'DEBUG', False),
+                )
+            except Exception as e:
+                if getattr(settings, 'DEBUG', False):
+                    return Response({'error': 'No se pudo enviar el correo', 'detail': str(e), 'link': link}, status=500)
         return Response({'message': 'Si el correo existe, se reenvió el mensaje de verificación.'})
 
     @action(detail=False, methods=['get'])
@@ -202,13 +220,17 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         user = Usuario.objects.filter(correo_electronico=email).first()
         if user:
             token = signing.dumps({'uid': str(user.id), 'email': user.correo_electronico}, salt='pwd-reset')
-            send_mail(
-                subject='Recuperación de contraseña',
-                message=f'Usa este token para restablecer tu contraseña:\n\n{token}\n\nSi no solicitaste esto, ignora este mensaje.',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.correo_electronico],
-                fail_silently=True,
-            )
+            try:
+                send_mail(
+                    subject='Recuperación de contraseña',
+                    message=f'Usa este token para restablecer tu contraseña:\n\n{token}\n\nSi no solicitaste esto, ignora este mensaje.',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.correo_electronico],
+                    fail_silently=not getattr(settings, 'DEBUG', False),
+                )
+            except Exception as e:
+                if getattr(settings, 'DEBUG', False):
+                    return Response({'error': 'No se pudo enviar el correo', 'detail': str(e)}, status=500)
         return Response({'message': 'Si el correo existe, se envió un mensaje de recuperación.'})
 
     @action(detail=False, methods=['post'])
